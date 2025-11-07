@@ -1,0 +1,12 @@
+﻿# T25--4m_MLOps Project
+
+## Описание проекта
+Проект по MLOps для прогнозирования курсов валют с использованием LSTM-моделей.
+
+## Содержание датасета
+USD_RUB (Курс USD к RUB)  
+EUR_RUB (Курс EUR к RUB)  
+GBP_RUB (Курс GBP к RUB)
+
+## Результаты обучения модели с использованием randomforestclassifier в MLflow:
+![Project Architecture](docs/images/mlflow.jpg)
