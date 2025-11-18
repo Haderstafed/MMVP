@@ -12,4 +12,19 @@ stages:
     - data/processed/processed.csv
     - src/train.py
     outs:
-    - models/
+    - models/best_model.joblib
+    - models/feature_names.joblib
+    - models/random_forest_model.joblib
+    - models/scaler.joblib
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+    - data/processed/processed.csv
+    - models/best_model.joblib
+    - models/feature_names.joblib
+    - models/scaler.joblib
+    - src/evaluate.py
+    outs:
+    - reports/eval.html
+    - reports/eval.json
+    - reports/eval_plots.png

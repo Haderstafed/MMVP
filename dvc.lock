@@ -7,23 +7,59 @@ stages:
       md5: d481a09e0d92554e262354e14674ee39
       size: 264728
     - path: src/preprocess.py
-      md5: ff2cca2466ff120c737d364f72c1be45
-      size: 1926
+      md5: 3e99011f813716e70014d36f80c60837
+      size: 7749
     outs:
     - path: data/processed/processed.csv
-      md5: 54a2b9bb564fe9a0615a7a3551042695
-      size: 254050
+      md5: 56685479a001fdc9445a4d66bce62c45
+      size: 384105
   train:
     cmd: python src/train.py
     deps:
     - path: data/processed/processed.csv
-      md5: 54a2b9bb564fe9a0615a7a3551042695
-      size: 254050
+      md5: 56685479a001fdc9445a4d66bce62c45
+      size: 384105
     - path: src/train.py
-      md5: 0a136c2628adbc17219eea601423f248
-      size: 4887
+      md5: a055b8e0ef580e7d0d4c283091f3f398
+      size: 11159
     outs:
-    - path: models/
-      md5: b60579a3398c795ab21b772794e96130.dir
-      size: 17677587
-      nfiles: 3
+    - path: models/best_model.joblib
+      md5: c4a11f17cfe212161327bf6a271101ee
+      size: 1119
+    - path: models/feature_names.joblib
+      md5: 14773e99bad1e6e1a7e922485f32b518
+      size: 486
+    - path: models/random_forest_model.joblib
+      md5: add85632262e96ee978e5d17d103913c
+      size: 400457
+    - path: models/scaler.joblib
+      md5: 9e6cf8ddb432d36764de18e16a859959
+      size: 2063
+  evaluate:
+    cmd: python src/evaluate.py
+    deps:
+    - path: data/processed/processed.csv
+      md5: 56685479a001fdc9445a4d66bce62c45
+      size: 384105
+    - path: models/best_model.joblib
+      md5: c4a11f17cfe212161327bf6a271101ee
+      size: 1119
+    - path: models/feature_names.joblib
+      md5: 14773e99bad1e6e1a7e922485f32b518
+      size: 486
+    - path: models/scaler.joblib
+      md5: 9e6cf8ddb432d36764de18e16a859959
+      size: 2063
+    - path: src/evaluate.py
+      md5: 72aac59bc66c0d9e0bd1db5333640610
+      size: 13570
+    outs:
+    - path: reports/eval.html
+      md5: 639fe1c6f9334a989645d137ef2ecb5d
+      size: 2696
+    - path: reports/eval.json
+      md5: cd77defa41b54a0f94d6b195b5b2f05f
+      size: 1365
+    - path: reports/eval_plots.png
+      md5: 630d30a30984a33438f183fabc31ac31
+      size: 277927

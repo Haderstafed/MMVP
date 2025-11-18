@@ -205,14 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-
-# MLflow
-mlruns/
-
-# Models (управляются через DVC)
-models/
-!models/.gitignore
-/models
-
 # DVC remote storage
 dvc_remote/
+mlruns/
+models/
+reports/

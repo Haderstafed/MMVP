@@ -1,128 +1,250 @@
 ﻿import pandas as pd
 import numpy as np
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split, cross_val_score, TimeSeriesSplit
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, roc_auc_score, classification_report, confusion_matrix
+from sklearn.preprocessing import StandardScaler
 import joblib
-import os
 import mlflow
 import mlflow.sklearn
+import os
+from datetime import datetime
+import warnings
+warnings.filterwarnings('ignore')
 
-# Фиксатор случайности для воспроизводимости результатов
-np.random.seed(42)
+def prepare_features(data):
+    """
+    Создание признаков для временных рядов валют
+    """
+    data = data.copy()
+    
+    # Сортируем по дате
+    data = data.sort_values('date').reset_index(drop=True)
+    
+    # Создаем целевую переменную - направление изменения USD_RUB на следующий день
+    data['USD_RUB_target'] = (data['USD_RUB'].shift(-1) > data['USD_RUB']).astype(int)
+    
+    # Создаем признаки БЕЗ утечки данных - используем только исторические данные
+    # Лаги (значения из предыдущих дней)
+    for lag in [1, 2, 3, 5, 7]:
+        data[f'USD_RUB_lag_{lag}'] = data['USD_RUB'].shift(lag)
+        data[f'EUR_RUB_lag_{lag}'] = data['EUR_RUB'].shift(lag)
+        data[f'GBP_RUB_lag_{lag}'] = data['GBP_RUB'].shift(lag)
+    
+    # Исторические скользящие средние (только по прошлым данным)
+    for window in [3, 5, 7]:
+        data[f'USD_RUB_MA_{window}'] = data['USD_RUB'].shift(1).rolling(window=window, min_periods=1).mean()
+        data[f'EUR_RUB_MA_{window}'] = data['EUR_RUB'].shift(1).rolling(window=window, min_periods=1).mean()
+        data[f'GBP_RUB_MA_{window}'] = data['GBP_RUB'].shift(1).rolling(window=window, min_periods=1).mean()
+    
+    # Разности (изменения за предыдущие периоды)
+    data['USD_RUB_change_1'] = data['USD_RUB'] - data['USD_RUB'].shift(1)
+    data['USD_RUB_change_3'] = data['USD_RUB'] - data['USD_RUB'].shift(3)
+    
+    # Удаляем строки с пропусками (из-за лагов)
+    data = data.dropna()
+    
+    return data
 
-print("=== STARTING MODEL TRAINING ===")
+def get_feature_names():
+    """
+    Возвращает список всех признаков, используемых в модели
+    """
+    base_features = ['USD_RUB', 'EUR_RUB', 'GBP_RUB', 'day_of_week', 'is_weekend']
+    
+    lag_features = []
+    for lag in [1, 2, 3, 5, 7]:
+        for currency in ['USD_RUB', 'EUR_RUB', 'GBP_RUB']:
+            lag_features.append(f'{currency}_lag_{lag}')
+    
+    ma_features = []
+    for window in [3, 5, 7]:
+        for currency in ['USD_RUB', 'EUR_RUB', 'GBP_RUB']:
+            ma_features.append(f'{currency}_MA_{window}')
+    
+    change_features = ['USD_RUB_change_1', 'USD_RUB_change_3']
+    
+    all_features = base_features + lag_features + ma_features + change_features
+    return [f for f in all_features if f not in ['date', 'USD_RUB_target']]
 
-try:
-    # 1. Загрузка data/processed/processed.csv
-    print("Loading processed data...")
-    data = pd.read_csv('data/processed/processed.csv')
-    print(f"Data shape: {data.shape}")
-    print(f"Columns: {list(data.columns)}")
-    
-    # 2. Подготовка данных для обучения
-    print("Preparing data for training...")
-    
-    # Создаем признаки и цели для прогнозирования КАЖДОЙ валюты
-    # Используем данные дня t для предсказания дня t+1
-    
-    # Признаки: текущие значения всех валют (все кроме последней строки)
-    X = data[['USD_RUB', 'GBP_RUB', 'EUR_RUB']].values[:-1]
-    
-    # Цели: значения на следующий день для КАЖДОЙ валюты
-    targets = {
-        'USD_RUB': data['USD_RUB'].values[1:],
-        'EUR_RUB': data['EUR_RUB'].values[1:],
-        'GBP_RUB': data['GBP_RUB'].values[1:]
-    }
-    
-    print(f"Features shape: {X.shape}")
-    for currency, y in targets.items():
-        print(f"Target {currency} shape: {y.shape}")
-    
-    # 3. Обучаем отдельную модель для каждой валюты
-    models = {}
-    metrics = {}
-    
-    # Настройка MLflow
-    mlflow.set_experiment("flight_delay")
-    
-    for currency, y in targets.items():
-        print(f"\n{'='*50}")
-        print(f"TRAINING MODEL FOR {currency}")
-        print(f"{'='*50}")
-        
-        with mlflow.start_run(run_name=f"RandomForest_{currency}"):
-            # Разделение на train/test для текущей валюты
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.2, random_state=42
-            )
-            print(f"Train set: {X_train.shape}, Test set: {X_test.shape}")
-            
-            # Обучение RandomForestRegressor для текущей валюты
-            print(f"Training RandomForestRegressor for {currency}...")
-            model = RandomForestRegressor(
-                n_estimators=100,
-                random_state=42,
-                max_depth=10,
-                min_samples_split=5,
-                min_samples_leaf=2
-            )
-            model.fit(X_train, y_train)
-            
-            # Предсказания и вычисление метрик
-            y_pred = model.predict(X_test)
-            
-            mae = mean_absolute_error(y_test, y_pred)
-            mse = mean_squared_error(y_test, y_pred)
-            r2 = r2_score(y_test, y_pred)
-            
-            print(f"Model performance for {currency}:")
-            print(f"MAE: {mae:.4f}")
-            print(f"MSE: {mse:.4f}") 
-            print(f"R2 Score: {r2:.4f}")
-            
-            # Сохраняем модель и метрики
-            models[currency] = model
-            metrics[currency] = {'mae': mae, 'mse': mse, 'r2': r2}
-            
-            # MLflow логирование для каждой валюты
-            mlflow.log_param("model", "RandomForestRegressor")
-            mlflow.log_param("n_estimators", 100)
-            mlflow.log_param("target_currency", currency)
-            
-            mlflow.log_metric("mae", mae)
-            mlflow.log_metric("mse", mse)
-            mlflow.log_metric("r2", r2)
-            
-            # Логирование модели в MLflow
-            mlflow.sklearn.log_model(model, f"model_{currency}")
-    
-    # 4. Сохранение всех моделей
-    print(f"\n{'='*50}")
-    print("SAVING ALL MODELS")
-    print(f"{'='*50}")
-    
+def main():
+    # Создаем директорию для моделей если нет
     os.makedirs('models', exist_ok=True)
     
-    for currency, model in models.items():
-        model_path = f'models/random_forest_{currency.lower()}.joblib'
-        joblib.dump(model, model_path)
-        print(f"Model for {currency} saved to: {model_path}")
+    # Загружаем обработанные данные
+    print("Загрузка обработанных данных...")
+    data = pd.read_csv('data/processed/processed.csv')
+    data['date'] = pd.to_datetime(data['date'])  # Конвертируем дату
+    print(f"Загружено {len(data)} строк")
     
-    # 5. Вывод итоговых результатов
-    print(f"\n{'='*50}")
-    print("FINAL RESULTS")
-    print(f"{'='*50}")
+    # Подготавливаем данные для классификации
+    print("Подготовка данных для классификации...")
+    data = prepare_features(data)
+    print(f"После подготовки: {len(data)} строк")
     
-    for currency, metric in metrics.items():
-        print(f"{currency}: MAE={metric['mae']:.4f}, R2={metric['r2']:.4f}")
+    # Получаем имена признаков
+    feature_columns = get_feature_names()
     
-    print("=" * 50)
-    print("ALL MODELS TRAINING COMPLETED SUCCESSFULLY!")
-    print("=" * 50)
+    # Проверяем наличие целевой колонки
+    target_column = 'USD_RUB_target'
+    if target_column not in data.columns:
+        print(f"Ошибка: целевая колонка {target_column} не найдена")
+        return
+    
+    # Подготавливаем данные
+    X = data[feature_columns]
+    y = data[target_column]
+    
+    print(f"Используется {len(feature_columns)} числовых признаков")
+    print(f"Распределение классов: {y.value_counts().to_dict()}")
+    
+    # Для временных рядов используем специальное разделение
+    tscv = TimeSeriesSplit(n_splits=5)
+    
+    # Разделяем на train/test с учетом временного порядка
+    train_size = int(0.8 * len(data))
+    X_train = X.iloc[:train_size]
+    X_test = X.iloc[train_size:]
+    y_train = y.iloc[:train_size]
+    y_test = y.iloc[train_size:]
+    
+    print(f"\nРазмер тренировочной выборки: {X_train.shape}")
+    print(f"Размер тестовой выборки: {X_test.shape}")
+    
+    # Масштабируем признаки
+    scaler = StandardScaler()
+    X_train_scaled = scaler.fit_transform(X_train)
+    X_test_scaled = scaler.transform(X_test)
+    
+    # Устанавливаем эксперимент MLflow
+    mlflow.set_experiment("flight_delay")
+    
+    # Обучаем модели с более реалистичными параметрами
+    models = {
+        "RandomForest": RandomForestClassifier(
+            n_estimators=100,
+            max_depth=5,
+            min_samples_split=20,
+            min_samples_leaf=10,
+            random_state=42
+        ),
+        "LogisticRegression": LogisticRegression(
+            C=0.1,
+            max_iter=1000,
+            random_state=42
+        )
+    }
+    
+    best_score = 0
+    best_model = None
+    best_model_name = ""
+    
+    for model_name, model in models.items():
+        print(f"\n--- Обучение {model_name} ---")
         
-except Exception as e:
-    print(f"Error during model training: {e}")
-    raise
+        with mlflow.start_run(run_name=model_name):
+            # Логируем параметры модели
+            if model_name == "RandomForest":
+                mlflow.log_param("n_estimators", 100)
+                mlflow.log_param("max_depth", 5)
+                mlflow.log_param("min_samples_split", 20)
+            else:  # LogisticRegression
+                mlflow.log_param("C", 0.1)
+                mlflow.log_param("max_iter", 1000)
+            
+            # Обучаем модель
+            model.fit(X_train_scaled, y_train)
+            
+            # Предсказания
+            y_pred = model.predict(X_test_scaled)
+            y_pred_proba = model.predict_proba(X_test_scaled)[:, 1]
+            
+            # Вычисление метрик
+            accuracy = accuracy_score(y_test, y_pred)
+            roc_auc = roc_auc_score(y_test, y_pred_proba)
+            
+            # Кросс-валидация с временными рядами
+            X_scaled = scaler.transform(X)
+            cv_scores = cross_val_score(model, X_scaled, y, cv=tscv, scoring='roc_auc')
+            
+            print(f"Accuracy: {accuracy:.4f}")
+            print(f"ROC AUC: {roc_auc:.4f}")
+            print(f"CV ROC AUC: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
+            
+            # Логируем параметры и метрики в MLflow
+            mlflow.log_param("model", model_name)
+            mlflow.log_param("n_features", len(feature_columns))
+            
+            mlflow.log_metric("accuracy", accuracy)
+            mlflow.log_metric("roc_auc", roc_auc)
+            mlflow.log_metric("cv_roc_auc_mean", cv_scores.mean())
+            mlflow.log_metric("cv_roc_auc_std", cv_scores.std())
+            mlflow.log_metric("train_size", len(X_train))
+            mlflow.log_metric("test_size", len(X_test))
+            
+            # Логируем модель в MLflow
+            mlflow.sklearn.log_model(
+                sk_model=model,
+                artifact_path="model",
+                registered_model_name=f"{model_name}_flight_delay"
+            )
+            
+            # Сохраняем модель с помощью joblib
+            model_filename = f"models/{model_name.lower()}_model.joblib"
+            joblib.dump(model, model_filename)
+            
+            # Также логируем файл модели как артефакт
+            mlflow.log_artifact(model_filename, artifact_path="models")
+            
+            # Сохраняем RandomForest с правильным именем для DVC
+            if model_name == "RandomForest":
+                joblib.dump(model, "models/random_forest_model.joblib")
+                mlflow.log_artifact("models/random_forest_model.joblib", artifact_path="dvc_models")
+                print("Сохранена модель для DVC: models/random_forest_model.joblib")
+            
+            print(f"Модель сохранена как: {model_filename}")
+            
+            # Обновляем лучшую модель
+            if roc_auc > best_score:
+                best_score = roc_auc
+                best_model = model
+                best_model_name = model_name
+    
+    print(f"\n=== ЛУЧШАЯ МОДЕЛЬ: {best_model_name} с ROC AUC: {best_score:.4f} ===")
+    
+    # Сохраняем лучшую модель и scaler
+    if best_model is not None:
+        joblib.dump(best_model, "models/best_model.joblib")
+        joblib.dump(scaler, "models/scaler.joblib")
+        joblib.dump(feature_columns, "models/feature_names.joblib")
+        
+        # Логируем лучшую модель как отдельный артефакт
+        with mlflow.start_run(run_name="best_model"):
+            mlflow.log_param("best_model", best_model_name)
+            mlflow.log_metric("best_roc_auc", best_score)
+            mlflow.sklearn.log_model(
+                sk_model=best_model,
+                artifact_path="best_model",
+                registered_model_name="best_flight_delay_model"
+            )
+            mlflow.log_artifact("models/best_model.joblib")
+            mlflow.log_artifact("models/scaler.joblib")
+            mlflow.log_artifact("models/feature_names.joblib")
+        
+        print("Лучшая модель, scaler и feature_names сохранены и залогированы в MLflow!")
+        
+        # Детальный анализ лучшей модели
+        y_pred_best = best_model.predict(X_test_scaled)
+        y_pred_proba_best = best_model.predict_proba(X_test_scaled)[:, 1]
+        
+        print("\nДетальный анализ лучшей модели:")
+        print(f"Accuracy: {accuracy_score(y_test, y_pred_best):.4f}")
+        print(f"ROC AUC: {roc_auc_score(y_test, y_pred_proba_best):.4f}")
+        print("\nConfusion Matrix:")
+        print(confusion_matrix(y_test, y_pred_best))
+        print("\nClassification Report:")
+        print(classification_report(y_test, y_pred_best))
+
+if __name__ == "__main__":
+    main()

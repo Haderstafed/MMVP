@@ -1,16 +1,15 @@
-﻿# ТЫ ПИДОР
+﻿Описание  
+Проект по предсказанию курса валют  
 
+Данные:  
+В датасете присутствуют:  
+EUR_RUB - курс евро относительно рубля  
+USD_RUB - курс доллара относительно рубля  
+GBP_RUB - курс фунта стерлингов относительно рубля  
+Начало датасета идет с начала 2015 года  
 
+Графики из MLflow UI:  
 
-# T25--4m_MLOps Project
+![График 1](https://raw.githubusercontent.com/darkgoolder/T25--4m_MLOps/6fde65d363bf0e5feae017e79bf0f789910989d7/11.jpg)  
 
-## Описание проекта
-Проект по MLOps для прогнозирования курсов валют с использованием LSTM-моделей.
-
-## Содержание датасета
-USD_RUB (Курс USD к RUB)  
-EUR_RUB (Курс EUR к RUB)  
-GBP_RUB (Курс GBP к RUB)
-
-## Результаты обучения модели с использованием randomforestclassifier в MLflow:
-![Project Architecture](docs/images/mlflow.jpg)
+![График 2](https://raw.githubusercontent.com/darkgoolder/T25--4m_MLOps/6fde65d363bf0e5feae017e79bf0f789910989d7/12.jpg)  
